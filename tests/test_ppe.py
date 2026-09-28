@@ -10,6 +10,7 @@ def test_future_return_is_forward_only():
     y=add_ppe_features(x)
     assert y.loc[100,"fwd_ret_5m"]>0
     assert pd.isna(y.loc[n-1,"fwd_ret_5m"])
+    assert pd.isna(y.loc[n-1,"up_5m"])
 
 def test_balanced_taker_flow_is_zero():
     n=300
