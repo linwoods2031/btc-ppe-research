@@ -98,7 +98,7 @@ jobs:
             echo 'Synthetic test fixtures are isolated and are not research data.'
             echo 'Successful execution does not establish an out-of-sample probability or trading advantage.'
             echo 'Research only: no trading API keys, orders or VPS deployment.'
-          } >> "$GITHUB_STEP_SUMMARYMARY"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload diagnostics even after failure
         if: ${{ always() }}
