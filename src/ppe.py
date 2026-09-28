@@ -29,4 +29,5 @@ def add_ppe_features(df: pd.DataFrame) -> pd.DataFrame:
     x["taker_imbalance"]=2*x["taker_buy_quote_volume"]/x["quote_volume"].replace(0,np.nan)-1
     x["fwd_ret_5m"]=x["log_close"].shift(-5)-x["log_close"]
     x["up_5m"]=(x["fwd_ret_5m"]>0).astype("Int64")
+    x.loc[x["fwd_ret_5m"].isna(),"up_5m"]=pd.NA
     return x
