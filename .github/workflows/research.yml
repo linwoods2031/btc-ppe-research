@@ -1,23 +1,119 @@
 name: PPE research
-on:
+
+'on':
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/research.yml'
+      - 'src/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'pytest.ini'
+      - 'requirements.txt'
   workflow_dispatch:
+    inputs:
+      days:
+        description: Complete UTC days of public BTC data
+        type: choice
+        default: '90'
+        options: ['7', '30', '90']
   schedule:
-    - cron: "20 3 * * 1"
+    - cron: '20 3 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ppe-research-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   study:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUNBUFFERED: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare diagnostics
+        run: |
+          set -euo pipefail
+          mkdir -p diagnostics artifacts
+          git rev-parse HEAD | tee diagnostics/commit.txt
+          printf 'run_id=%s\nattempt=%s\nevent=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_EVENT_NAME" > diagnostics/run.txt
+
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - run: pytest -q
-      - run: python scripts/download_binance.py --days 90
-      - run: python scripts/run_study.py
-      - uses: actions/upload-artifact@v4
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python --version > diagnostics/python-version.txt
+          python -m pip install -r requirements.txt 2>&1 | tee diagnostics/install.log
+          python -m pip freeze > diagnostics/requirements-resolved.txt
+
+      - name: Run tests
+        id: tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q -ra --junitxml=diagnostics/pytest.xml 2>&1 | tee diagnostics/pytest.log
+
+      - name: Download real Binance data
+        id: download
+        env:
+          PPE_DAYS: ${{ inputs.days || '90' }}
+        run: |
+          set -euo pipefail
+          case "$PPE_DAYS" in 7|30|90) ;; *) echo 'Unsupported day count'; exit 2 ;; esac
+          python scripts/download_binance.py --days "$PPE_DAYS" 2>&1 | tee diagnostics/download.log
+
+      - name: Run exploratory PPE study
+        id: study
+        run: |
+          set -euo pipefail
+          python scripts/run_study.py 2>&1 | tee diagnostics/study.log
+
+      - name: Write run summary
+        if: ${{ always() }}
+        env:
+          TEST_OUTCOME: ${{ steps.tests.outcome }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          STUDY_OUTCOME: ${{ steps.study.outcome }}
+        run: |
+          {
+            echo '# BTC PPE research'
+            printf 'Commit: `%s`\n\n' "$GITHUB_SHA"
+            printf 'Tests: **%s**\n\n' "$TEST_OUTCOME"
+            printf 'Real data download: **%s**\n\n' "$DOWNLOAD_OUTCOME"
+            printf 'Exploratory study: **%s**\n\n' "$STUDY_OUTCOME"
+            echo 'Diagnostics contain the resolved dependencies, pytest XML and stage logs.'
+            echo 'Synthetic test fixtures are isolated and are not research data.'
+            echo 'Successful execution does not establish an out-of-sample probability or trading advantage.'
+            echo 'Research only: no trading API keys, orders or VPS deployment.'
+          } >> "$GITHUB_STEP_SUMMARYMARY"
+
+      - name: Upload diagnostics even after failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: btc-ppe-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: diagnostics/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload real-data research results
+        if: ${{ steps.study.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
         with:
           name: btc-ppe-results
           path: artifacts/
+          retention-days: 30
+          if-no-files-found: error
